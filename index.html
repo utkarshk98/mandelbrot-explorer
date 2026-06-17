@@ -3,43 +3,69 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Mandelbrot Deep Zoom</title>
+<title>Mandelbrot · Julia Explorer</title>
 <style>
-  :root { color-scheme: dark; }
+  :root { color-scheme: dark; --acc: #7aa2ff; }
   html, body { margin: 0; height: 100%; overflow: hidden; background: #000;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   #view { display: block; width: 100vw; height: 100vh; cursor: grab; touch-action: none; }
   #view.dragging { cursor: grabbing; }
+  #view.picking { cursor: crosshair; }
 
   .panel {
     position: fixed; top: 12px; left: 12px; z-index: 10;
     background: rgba(12,12,16,0.74); backdrop-filter: blur(10px);
     border: 1px solid rgba(255,255,255,0.10); border-radius: 12px;
     padding: 12px 14px; color: #e8e8ee; font-size: 12px; line-height: 1.7;
-    min-width: 238px; user-select: none; box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+    width: 244px; user-select: none; box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+    max-height: calc(100vh - 24px); overflow-y: auto;
   }
-  .panel h1 { font-size: 13px; margin: 0 0 8px; letter-spacing: .5px; font-weight: 600;
+  .panel h1 { font-size: 13px; margin: 0 0 10px; letter-spacing: .5px; font-weight: 600;
     display:flex; justify-content:space-between; align-items:center; }
   #status { font-size: 10px; font-weight: 400; }
   #status.busy { color: #ffd27a; } #status.idle { color: #6fcf86; }
+
+  .seg { display:flex; gap:4px; background:rgba(255,255,255,0.05); padding:3px;
+    border-radius:9px; margin-bottom:10px; }
+  .seg button { flex:1; border:none; background:transparent; padding:6px 0; border-radius:6px;
+    color:#9a9aa8; font-size:11.5px; }
+  .seg button.active { background:var(--acc); color:#0b0b12; font-weight:600; }
+
   .row { display: flex; justify-content: space-between; gap: 14px; }
   .row .k { color: #8a8a99; } .row .v { color: #f0f0f6; font-variant-numeric: tabular-nums; }
-  .mono { word-break: break-all; font-size: 10.5px; color:#c8c8d4; margin-top:2px; }
+  .mono { word-break: break-all; font-size: 10.5px; color:#c8c8d4; margin-top:1px; }
+  .sec { margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.08); }
   .slider { margin-top: 9px; }
   .slider label { color:#8a8a99; display:block; margin-bottom:2px; }
-  input[type=range] { width: 100%; accent-color: #7aa2ff; }
-  .controls { margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  input[type=range] { width: 100%; accent-color: var(--acc); }
+  select { width:100%; margin-top:4px; font:inherit; font-size:11px; color:#e8e8ee;
+    background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12);
+    border-radius:8px; padding:6px; }
+  .controls { margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
   button {
     font: inherit; font-size: 11px; color: #e8e8ee; cursor: pointer;
     background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 8px; padding: 6px 8px; transition: background .15s;
+    border-radius: 8px; padding: 6px 8px; transition: background .15s, color .15s;
   }
   button:hover { background: rgba(255,255,255,0.14); }
+  button.on { background: var(--acc); color:#0b0b12; border-color:var(--acc); }
+
   .hint { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
     z-index: 10; color: rgba(255,255,255,0.45); font-size: 11px; pointer-events: none;
     text-align:center; }
   .toggle { position: fixed; top: 12px; left: 12px; z-index: 11; display: none;
-    min-width:auto; padding:8px 10px; }
+    width:auto; padding:8px 10px; }
+
+  /* live Julia preview */
+  #inset { position: fixed; right: 14px; bottom: 14px; z-index: 10; width: 190px;
+    border-radius: 12px; overflow: hidden; cursor: pointer;
+    border:1px solid rgba(255,255,255,0.18); box-shadow: 0 8px 30px rgba(0,0,0,0.55);
+    background:#000; transition: transform .12s; }
+  #inset:hover { transform: scale(1.03); }
+  #julia { display:block; width:190px; height:190px; }
+  .insetcap { position:absolute; left:0; right:0; bottom:0; padding:5px 8px;
+    background:linear-gradient(transparent, rgba(0,0,0,0.75)); color:#e8e8ee;
+    font-size:10px; pointer-events:none; display:flex; justify-content:space-between; }
   #err { position:fixed; inset:0; display:none; place-items:center; color:#fff;
     background:#111; padding:40px; text-align:center; z-index:50; }
 </style>
@@ -48,152 +74,184 @@
 <canvas id="view"></canvas>
 <div id="err"></div>
 
+<div id="inset" title="Click to open this Julia set full-screen">
+  <canvas id="julia" width="380" height="380"></canvas>
+  <div class="insetcap"><span>Julia preview</span><span id="inset-c">click to open ⤢</span></div>
+</div>
+
 <div class="panel" id="panel">
-  <h1>● MANDELBROT <span id="status" class="idle">ready</span></h1>
+  <h1><span id="title">● MANDELBROT</span> <span id="status" class="idle">ready</span></h1>
+
+  <div class="seg" id="seg">
+    <button data-mode="mandelbrot" class="active">Mandelbrot</button>
+    <button data-mode="julia">Julia</button>
+  </div>
+
   <div class="row"><span class="k">zoom</span><span class="v" id="i-zoom">1×</span></div>
   <div class="row"><span class="k">iterations</span><span class="v" id="i-iter">256</span></div>
-  <div class="row"><span class="k">precision</span><span class="v" id="i-prec">53 bit</span></div>
+  <div class="row" id="row-prec"><span class="k">precision</span><span class="v" id="i-prec">53 bit</span></div>
   <div class="row"><span class="k">render</span><span class="v" id="i-fps">–</span></div>
-  <div class="row"><span class="k">center re</span></div>
-  <div class="mono" id="i-re">-0.5</div>
-  <div class="row"><span class="k">center im</span></div>
-  <div class="mono" id="i-im">0.0</div>
 
-  <div class="slider">
-    <label>iterations <span id="i-iterauto">(auto)</span></label>
-    <input type="range" id="iterSlider" min="128" max="100000" step="128" value="256">
+  <div id="info-mandel">
+    <div class="row"><span class="k">center re</span></div>
+    <div class="mono" id="i-re">-0.5</div>
+    <div class="row"><span class="k">center im</span></div>
+    <div class="mono" id="i-im">0.0</div>
   </div>
-  <div class="slider">
-    <label>color shift</label>
-    <input type="range" id="colorSlider" min="0" max="100" step="1" value="0">
+  <div id="info-julia" style="display:none">
+    <div class="row"><span class="k">parameter c</span></div>
+    <div class="mono" id="i-c">0 + 0i</div>
   </div>
-  <div class="slider">
-    <label>color density</label>
-    <input type="range" id="densitySlider" min="1" max="120" step="1" value="28">
+
+  <div class="sec">
+    <label style="color:#8a8a99">jump to</label>
+    <select id="presets"></select>
   </div>
-  <div class="slider">
-    <label>palette</label>
-    <input type="range" id="paletteSlider" min="0" max="4" step="1" value="1">
+
+  <div class="sec">
+    <div class="slider">
+      <label>iterations <span id="i-iterauto">(auto)</span></label>
+      <input type="range" id="iterSlider" min="64" max="100000" step="64" value="256">
+    </div>
+    <div class="slider">
+      <label>color shift</label>
+      <input type="range" id="colorSlider" min="0" max="100" step="1" value="0">
+    </div>
+    <div class="slider">
+      <label>color density</label>
+      <input type="range" id="densitySlider" min="1" max="120" step="1" value="28">
+    </div>
+    <div class="slider">
+      <label>palette</label>
+      <input type="range" id="paletteSlider" min="0" max="4" step="1" value="1">
+    </div>
   </div>
+
   <div class="controls">
     <button id="btnReset">⟲ Reset</button>
-    <button id="btnAuto">⚙ Auto iter: on</button>
-    <button id="btnSave">⬇ Save PNG</button>
+    <button id="btnAuto" class="on">⚙ Auto</button>
+    <button id="btnAnim">✨ Cycle</button>
+    <button id="btnInset" class="on">👁 Preview</button>
+    <button id="btnFull">⛶ Full</button>
+    <button id="btnSave">⬇ PNG</button>
+  </div>
+  <div class="controls" style="grid-template-columns:1fr;">
     <button id="btnHide">✕ Hide UI</button>
   </div>
 </div>
 <button class="toggle panel" id="btnShow">☰</button>
 
-<div class="hint">scroll / pinch to zoom · drag to pan · double-click zoom in · shift+double-click zoom out</div>
+<div class="hint" id="hint">scroll / pinch to zoom · drag to pan · double-click zoom in · move cursor to morph the Julia preview</div>
 
 <script>
 'use strict';
 const canvas = document.getElementById('view');
-const gl = canvas.getContext('webgl2', { antialias: false, preserveDrawingBuffer: true });
-if (!gl){
-  const e = document.getElementById('err');
-  e.style.display = 'grid';
-  e.textContent = 'WebGL2 is required for the deep-zoom renderer but is not available in this browser.';
+const gl = canvas.getContext('webgl2', { antialias:false, preserveDrawingBuffer:true });
+const jcanvas = document.getElementById('julia');
+const gj = jcanvas.getContext('webgl2', { antialias:false });
+if (!gl || !gj){
+  const e = document.getElementById('err'); e.style.display='grid';
+  e.textContent = 'WebGL2 is required for this renderer but is not available in this browser.';
   throw new Error('no webgl2');
 }
 
-// ---------- shaders ----------
+// ---------- shared GLSL ----------
 const VS = `#version 300 es
-in vec2 a_pos;
-void main(){ gl_Position = vec4(a_pos, 0.0, 1.0); }`;
+layout(location=0) in vec2 a_pos;
+void main(){ gl_Position = vec4(a_pos,0.0,1.0); }`;
 
-const FS = `#version 300 es
-precision highp float;
-precision highp int;
-precision highp sampler2D;
-
-uniform sampler2D u_orbit;   // RG = reference orbit Zx,Zy
-uniform int   u_orbitW;
-uniform int   u_orbitLen;
-uniform int   u_maxIter;
-uniform vec2  u_res;
-uniform float u_step;        // complex units per pixel
-uniform float u_escape;
-uniform float u_density;
-uniform float u_colorOffset;
-uniform int   u_palette;
-out vec4 frag;
-
-vec2 getZ(int m){
-  return texelFetch(u_orbit, ivec2(m % u_orbitW, m / u_orbitW), 0).xy;
-}
-
+const PAL = `
+uniform int u_palette;
 vec3 palette(float t){
   const float TAU = 6.28318530718;
-  if (u_palette == 0) return 0.5 + 0.5*cos(TAU*(vec3(0.00,0.10,0.20)+t));
-  if (u_palette == 1) return 0.5 + 0.5*cos(TAU*(vec3(0.00,0.33,0.67)+t));
-  if (u_palette == 2) return 0.5 + 0.5*cos(TAU*(vec3(0.30,0.20,0.10)+t*0.7));
-  if (u_palette == 3){ float v = 0.5+0.5*sin(TAU*t); return vec3(0.4*v,0.7*v,v); }
-  return 0.5 + 0.5*cos(TAU*(vec3(0.80,0.50,0.20)+t));
-}
-
-void main(){
-  vec2 px = gl_FragCoord.xy - 0.5*u_res;       // y is up
-  float dcx = px.x * u_step;
-  float dcy = px.y * u_step;
-
-  float ex = 0.0, ey = 0.0;   // delta_z
-  int m = 0;
-  int iter = 0;
-  float mag = 0.0;
-  bool escaped = false;
-  int Lm1 = u_orbitLen - 1;
-
-  for (int i = 0; i < 200000; i++){
-    if (iter >= u_maxIter) break;
-    vec2 Z = getZ(m);
-    float ex2 = ex*ex, ey2 = ey*ey;
-    float tx = 2.0*(Z.x*ex - Z.y*ey) + (ex2 - ey2) + dcx;
-    float ty = 2.0*(Z.x*ey + Z.y*ex) + (2.0*ex*ey) + dcy;
-    ex = tx; ey = ty;
-    m++; iter++;
-    vec2 Zm = getZ(m);
-    float zx = Zm.x + ex, zy = Zm.y + ey;
-    mag = zx*zx + zy*zy;
-    if (mag > u_escape){ escaped = true; break; }
-    float emag = ex*ex + ey*ey;
-    if (mag < emag || m >= Lm1){ ex = zx; ey = zy; m = 0; }
-  }
-
-  if (!escaped){
-    frag = vec4(0.0, 0.0, 0.0, 1.0);
-  } else {
-    float log_zn = log(mag) * 0.5;
-    float nu = log(log_zn / 0.6931472) / 0.6931472;
-    float sm = (float(iter) - nu) / u_density + u_colorOffset;
-    frag = vec4(palette(sm), 1.0);
-  }
+  if (u_palette == 0) return 0.5+0.5*cos(TAU*(vec3(0.00,0.10,0.20)+t));
+  if (u_palette == 1) return 0.5+0.5*cos(TAU*(vec3(0.00,0.33,0.67)+t));
+  if (u_palette == 2) return 0.5+0.5*cos(TAU*(vec3(0.30,0.20,0.10)+t*0.7));
+  if (u_palette == 3){ float v=0.5+0.5*sin(TAU*t); return vec3(0.4*v,0.7*v,v); }
+  return 0.5+0.5*cos(TAU*(vec3(0.80,0.50,0.20)+t));
 }`;
 
-function compile(type, src){
-  const s = gl.createShader(type);
-  gl.shaderSource(s, src); gl.compileShader(s);
-  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
-  return s;
+const SMOOTH = `
+vec3 shade(float iter, float mag, float dens, float off){
+  float log_zn = log(mag)*0.5;
+  float nu = log(log_zn/0.6931472)/0.6931472;
+  return palette((iter - nu)/dens + off);
+}`;
+
+// Mandelbrot — arbitrary-precision reference orbit + per-pixel perturbation
+const FS_M = `#version 300 es
+precision highp float; precision highp int; precision highp sampler2D;
+uniform sampler2D u_orbit; uniform int u_orbitW, u_orbitLen, u_maxIter;
+uniform vec2 u_res; uniform float u_step, u_escape, u_density, u_colorOffset;
+${PAL}${SMOOTH}
+out vec4 frag;
+vec2 getZ(int m){ return texelFetch(u_orbit, ivec2(m % u_orbitW, m / u_orbitW), 0).xy; }
+void main(){
+  vec2 px = gl_FragCoord.xy - 0.5*u_res;
+  float dcx = px.x*u_step, dcy = px.y*u_step;
+  float ex=0.0, ey=0.0; int m=0, iter=0; float mag=0.0; bool esc=false; int Lm1=u_orbitLen-1;
+  for(int i=0;i<200000;i++){
+    if(iter>=u_maxIter) break;
+    vec2 Z=getZ(m); float ex2=ex*ex, ey2=ey*ey;
+    float tx=2.0*(Z.x*ex-Z.y*ey)+(ex2-ey2)+dcx;
+    float ty=2.0*(Z.x*ey+Z.y*ex)+(2.0*ex*ey)+dcy;
+    ex=tx; ey=ty; m++; iter++;
+    vec2 Zm=getZ(m); float zx=Zm.x+ex, zy=Zm.y+ey; mag=zx*zx+zy*zy;
+    if(mag>u_escape){ esc=true; break; }
+    float emag=ex*ex+ey*ey;
+    if(mag<emag || m>=Lm1){ ex=zx; ey=zy; m=0; }
+  }
+  frag = esc ? vec4(shade(float(iter),mag,u_density,u_colorOffset),1.0) : vec4(0,0,0,1);
+}`;
+
+// Julia — direct iteration of z^2 + c (c fixed), used full-screen and in the preview
+const FS_J = `#version 300 es
+precision highp float; precision highp int;
+uniform vec2 u_res, u_c, u_center; uniform float u_span, u_escape, u_density, u_colorOffset;
+uniform int u_maxIter;
+${PAL}${SMOOTH}
+out vec4 frag;
+void main(){
+  float step = u_span/u_res.x;
+  vec2 z = u_center + (gl_FragCoord.xy - 0.5*u_res)*step;
+  vec2 c = u_c; int iter=0; float mag=0.0; bool esc=false;
+  for(int i=0;i<200000;i++){
+    if(iter>=u_maxIter) break;
+    float xt=z.x*z.x-z.y*z.y+c.x, yt=2.0*z.x*z.y+c.y; z=vec2(xt,yt); iter++;
+    mag=z.x*z.x+z.y*z.y; if(mag>u_escape){ esc=true; break; }
+  }
+  frag = esc ? vec4(shade(float(iter),mag,u_density,u_colorOffset),1.0) : vec4(0,0,0,1);
+}`;
+
+function makeProgram(ctx, fsSrc){
+  const c=(t,s)=>{ const sh=ctx.createShader(t); ctx.shaderSource(sh,s); ctx.compileShader(sh);
+    if(!ctx.getShaderParameter(sh,ctx.COMPILE_STATUS)) throw new Error(ctx.getShaderInfoLog(sh)); return sh; };
+  const p=ctx.createProgram();
+  ctx.attachShader(p,c(ctx.VERTEX_SHADER,VS)); ctx.attachShader(p,c(ctx.FRAGMENT_SHADER,fsSrc));
+  ctx.linkProgram(p);
+  if(!ctx.getProgramParameter(p,ctx.LINK_STATUS)) throw new Error(ctx.getProgramInfoLog(p));
+  return p;
 }
-const prog = gl.createProgram();
-gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
-gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
-gl.linkProgram(prog);
-if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
-gl.useProgram(prog);
+function fullscreenVAO(ctx){
+  const vao=ctx.createVertexArray(); ctx.bindVertexArray(vao);
+  const b=ctx.createBuffer(); ctx.bindBuffer(ctx.ARRAY_BUFFER,b);
+  ctx.bufferData(ctx.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),ctx.STATIC_DRAW);
+  ctx.enableVertexAttribArray(0); ctx.vertexAttribPointer(0,2,ctx.FLOAT,false,0,0);
+  return vao;
+}
 
-const quad = gl.createBuffer();
-gl.bindBuffer(gl.ARRAY_BUFFER, quad);
-gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
-const aPos = gl.getAttribLocation(prog, 'a_pos');
-gl.enableVertexAttribArray(aPos);
-gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
-
-const U = n => gl.getUniformLocation(prog, n);
-const uni = { orbit:U('u_orbit'), orbitW:U('u_orbitW'), orbitLen:U('u_orbitLen'),
-  maxIter:U('u_maxIter'), res:U('u_res'), step:U('u_step'), escape:U('u_escape'),
-  density:U('u_density'), colorOffset:U('u_colorOffset'), palette:U('u_palette') };
+// main context: two programs (Mandelbrot, Julia)
+const progM = makeProgram(gl, FS_M);
+const progJ = makeProgram(gl, FS_J);
+const mainVAO = fullscreenVAO(gl); gl.bindVertexArray(mainVAO);
+const UM = n => gl.getUniformLocation(progM,n);
+const uM = { orbit:UM('u_orbit'), orbitW:UM('u_orbitW'), orbitLen:UM('u_orbitLen'),
+  maxIter:UM('u_maxIter'), res:UM('u_res'), step:UM('u_step'), escape:UM('u_escape'),
+  density:UM('u_density'), colorOffset:UM('u_colorOffset'), palette:UM('u_palette') };
+const UJ = n => gl.getUniformLocation(progJ,n);
+const uJ = { res:UJ('u_res'), c:UJ('u_c'), center:UJ('u_center'), span:UJ('u_span'),
+  maxIter:UJ('u_maxIter'), escape:UJ('u_escape'), density:UJ('u_density'),
+  colorOffset:UJ('u_colorOffset'), palette:UJ('u_palette') };
 
 const orbitTex = gl.createTexture();
 gl.bindTexture(gl.TEXTURE_2D, orbitTex);
@@ -201,259 +259,354 @@ gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-gl.uniform1i(uni.orbit, 0);
+gl.uniform1i(uM.orbit, 0);
 const ORBIT_W = 1024;
 
-// ---------- view state ----------
-const INIT_RE = -0.5, INIT_IM = 0.0, INIT_VIEW_W = 3.5;
-let viewWidth = INIT_VIEW_W;
-let storedP = 0;
-let cxFix = 0n, cyFix = 0n;
-let maxIter = 256, autoIter = true;
-let colorOffset = 0, density = 28, paletteIdx = 1;
-let dpr = Math.min(window.devicePixelRatio || 1, 2);
-let deviceW = 0, deviceH = 0;
-const ESCAPE = 1e8;
+// inset context: Julia program
+const progI = makeProgram(gj, FS_J);
+const insetVAO = fullscreenVAO(gj); gj.bindVertexArray(insetVAO);
+const UI = n => gj.getUniformLocation(progI,n);
+const uI = { res:UI('u_res'), c:UI('u_c'), center:UI('u_center'), span:UI('u_span'),
+  maxIter:UI('u_maxIter'), escape:UI('u_escape'), density:UI('u_density'),
+  colorOffset:UI('u_colorOffset'), palette:UI('u_palette') };
 
-// ---------- arbitrary-precision helpers ----------
-function doubleToFix(x, P){
-  if (x === 0) return 0n;
-  const neg = x < 0; x = Math.abs(x);
-  const e = Math.floor(Math.log2(x));
-  const mant = Math.round((x / Math.pow(2, e)) * Math.pow(2, 52));
-  const shift = e - 52 + P;
-  let b = BigInt(mant);
-  b = shift >= 0 ? (b << BigInt(shift)) : (b >> BigInt(-shift));
-  return neg ? -b : b;
-}
-function fixToDouble(b, P){
-  if (b === 0n) return 0;
-  const neg = b < 0n; let v = neg ? -b : b;
-  const bits = v.toString(2).length;
-  const sh = bits > 60 ? bits - 60 : 0;
-  const d = Number(v >> BigInt(sh)) * Math.pow(2, sh - P);
-  return neg ? -d : d;
-}
-function fixToString(b, P, digits){
-  const neg = b < 0n; let v = neg ? -b : b;
-  const scale = 10n ** BigInt(digits);
-  const intPart = v >> BigInt(P);
-  const frac = v - (intPart << BigInt(P));
-  const fracDec = (frac * scale) >> BigInt(P);
-  const fs = fracDec.toString().padStart(digits, '0');
-  return (neg ? '-' : '') + intPart.toString() + '.' + fs;
-}
-function ensurePrecision(needP){
-  if (needP > storedP){
-    const sh = BigInt(needP - storedP);
-    cxFix <<= sh; cyFix <<= sh; storedP = needP;
-  }
-}
-function precisionForView(){ return Math.max(40, Math.ceil(-Math.log2(viewWidth)) + 100); }
-function offsetCenter(odx, ody){
-  cxFix += doubleToFix(odx, storedP);
-  cyFix += doubleToFix(ody, storedP);
-}
+// ---------- state ----------
+const INIT_RE=-0.5, INIT_IM=0.0, INIT_VIEW_W=3.5;
+let mode = 'mandelbrot';
+// Mandelbrot view
+let viewWidth=INIT_VIEW_W, storedP=0, cxFix=0n, cyFix=0n, maxIter=256, autoIter=true;
+// Julia view
+let jcx=-0.8, jcy=0.156, jCenterX=0, jCenterY=0, jViewWidth=3.5, jMaxIter=512, jAuto=true;
+// shared
+let colorOffset=0, density=28, paletteIdx=1;
+let dpr=Math.min(window.devicePixelRatio||1,2), deviceW=0, deviceH=0;
+const ESCAPE=1e8;
+// interactive preview
+let showInset=true, hovering=false, hoverCx=-0.8, hoverCy=0.156, lastCssX=0, lastCssY=0;
+let animating=false;
+let currentL=1, orbitDirty=true;
 
-// ---------- reference orbit (arbitrary precision) ----------
+// ---------- arbitrary precision ----------
+function doubleToFix(x,P){ if(x===0)return 0n; const neg=x<0; x=Math.abs(x);
+  const e=Math.floor(Math.log2(x)); const mant=Math.round((x/Math.pow(2,e))*Math.pow(2,52));
+  const shift=e-52+P; let b=BigInt(mant); b=shift>=0?(b<<BigInt(shift)):(b>>BigInt(-shift)); return neg?-b:b; }
+function fixToDouble(b,P){ if(b===0n)return 0; const neg=b<0n; let v=neg?-b:b;
+  const bits=v.toString(2).length; const sh=bits>60?bits-60:0;
+  const d=Number(v>>BigInt(sh))*Math.pow(2,sh-P); return neg?-d:d; }
+function fixToString(b,P,digits){ const neg=b<0n; let v=neg?-b:b; const scale=10n**BigInt(digits);
+  const ip=v>>BigInt(P); const fr=v-(ip<<BigInt(P)); const fd=(fr*scale)>>BigInt(P);
+  return (neg?'-':'')+ip.toString()+'.'+fd.toString().padStart(digits,'0'); }
+function ensurePrecision(needP){ if(needP>storedP){ const sh=BigInt(needP-storedP);
+  cxFix<<=sh; cyFix<<=sh; storedP=needP; } }
+function precisionForView(){ return Math.max(40, Math.ceil(-Math.log2(viewWidth))+100); }
+function offsetCenter(odx,ody){ cxFix+=doubleToFix(odx,storedP); cyFix+=doubleToFix(ody,storedP); }
+
+// ---------- reference orbit ----------
 function computeReference(){
-  const P = BigInt(storedP);
-  const thresh = 4n << P;
-  let zx = 0n, zy = 0n;
-  const cap = maxIter + 1;
-  let L = 0;
-  const H = Math.ceil(cap / ORBIT_W);
-  const data = new Float32Array(ORBIT_W * H * 4);
-  for (let n = 0; n < cap; n++){
-    data[n*4]   = fixToDouble(zx, storedP);
-    data[n*4+1] = fixToDouble(zy, storedP);
-    L = n + 1;
-    const zx2 = (zx*zx) >> P, zy2 = (zy*zy) >> P;
-    if (zx2 + zy2 > thresh) break;
-    const xy = (zx*zy) >> P;
-    zx = zx2 - zy2 + cxFix;
-    zy = (xy << 1n) + cyFix;
+  const P=BigInt(storedP); const thresh=4n<<P; let zx=0n,zy=0n; const cap=maxIter+1; let L=0;
+  const H=Math.ceil(cap/ORBIT_W); const data=new Float32Array(ORBIT_W*H*4);
+  for(let n=0;n<cap;n++){
+    data[n*4]=fixToDouble(zx,storedP); data[n*4+1]=fixToDouble(zy,storedP); L=n+1;
+    const zx2=(zx*zx)>>P, zy2=(zy*zy)>>P; if(zx2+zy2>thresh) break;
+    const xy=(zx*zy)>>P; zx=zx2-zy2+cxFix; zy=(xy<<1n)+cyFix;
   }
-  return { data, L, H };
+  return {data,L,H};
 }
 
 // ---------- render ----------
-let rafPending = false, dirty = false;
-function scheduleRender(){
-  dirty = true;
-  if (!rafPending){ rafPending = true; requestAnimationFrame(frame); }
-}
+let rafPending=false, dirty=false;
+function scheduleRender(needOrbit){ if(needOrbit!==false) orbitDirty=true; dirty=true;
+  if(!rafPending){ rafPending=true; requestAnimationFrame(frame); } }
+function quickRender(){ dirty=true; if(!rafPending){ rafPending=true; requestAnimationFrame(frame); } }
+
 function frame(){
-  rafPending = false;
-  if (!dirty) return;
-  dirty = false;
-  if (autoIter) maxIter = computeAutoIter();
-  ensurePrecision(precisionForView());
-  setStatus(true);
-  const t0 = performance.now();
-
-  const { data, L, H } = computeReference();
-  gl.bindTexture(gl.TEXTURE_2D, orbitTex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, ORBIT_W, H, 0, gl.RGBA, gl.FLOAT, data);
-
-  gl.uniform1i(uni.orbitW, ORBIT_W);
-  gl.uniform1i(uni.orbitLen, L);
-  gl.uniform1i(uni.maxIter, maxIter);
-  gl.uniform2f(uni.res, deviceW, deviceH);
-  gl.uniform1f(uni.step, viewWidth / deviceW);
-  gl.uniform1f(uni.escape, ESCAPE);
-  gl.uniform1f(uni.density, density);
-  gl.uniform1f(uni.colorOffset, colorOffset);
-  gl.uniform1i(uni.palette, paletteIdx);
-  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  rafPending=false; if(!dirty) return; dirty=false;
+  const t0=performance.now();
+  if(mode==='mandelbrot') drawMandel(); else drawJulia();
   gl.finish();
-
-  const dt = performance.now() - t0;
-  el('i-fps').textContent = dt.toFixed(0) + ' ms';
-  setStatus(false);
-  updateUI();
+  el('i-fps').textContent=(performance.now()-t0).toFixed(0)+' ms';
+  if(showInset && mode==='mandelbrot') renderInset();
+  setStatus(false); updateUI();
 }
-function computeAutoIter(){
-  const zoom = INIT_VIEW_W / viewWidth;
-  const it = Math.round(256 + 130 * Math.max(0, Math.log2(zoom)));
-  return Math.max(128, Math.min(12000, it));
+
+function drawMandel(){
+  if(autoIter) maxIter=computeAutoIter(viewWidth,INIT_VIEW_W,12000);
+  ensurePrecision(precisionForView());
+  if(orbitDirty){ setStatus(true);
+    const r=computeReference(); currentL=r.L;
+    gl.bindTexture(gl.TEXTURE_2D,orbitTex);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA32F,ORBIT_W,r.H,0,gl.RGBA,gl.FLOAT,r.data);
+    orbitDirty=false;
+  }
+  gl.useProgram(progM); gl.bindVertexArray(mainVAO);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,orbitTex);
+  gl.viewport(0,0,deviceW,deviceH);
+  gl.uniform1i(uM.orbit,0); gl.uniform1i(uM.orbitW,ORBIT_W); gl.uniform1i(uM.orbitLen,currentL);
+  gl.uniform1i(uM.maxIter,maxIter); gl.uniform2f(uM.res,deviceW,deviceH);
+  gl.uniform1f(uM.step,viewWidth/deviceW); gl.uniform1f(uM.escape,ESCAPE);
+  gl.uniform1f(uM.density,density); gl.uniform1f(uM.colorOffset,colorOffset);
+  gl.uniform1i(uM.palette,paletteIdx);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+}
+
+function drawJulia(){
+  if(jAuto) jMaxIter=computeAutoIter(jViewWidth,3.5,6000);
+  gl.useProgram(progJ); gl.bindVertexArray(mainVAO);
+  gl.viewport(0,0,deviceW,deviceH);
+  gl.uniform2f(uJ.res,deviceW,deviceH); gl.uniform2f(uJ.c,jcx,jcy);
+  gl.uniform2f(uJ.center,jCenterX,jCenterY); gl.uniform1f(uJ.span,jViewWidth);
+  gl.uniform1i(uJ.maxIter,jMaxIter); gl.uniform1f(uJ.escape,ESCAPE);
+  gl.uniform1f(uJ.density,density); gl.uniform1f(uJ.colorOffset,colorOffset);
+  gl.uniform1i(uJ.palette,paletteIdx);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+}
+
+function renderInset(){
+  const N=jcanvas.width;
+  gj.useProgram(progI); gj.bindVertexArray(insetVAO);
+  gj.viewport(0,0,N,N);
+  gj.uniform2f(uI.res,N,N); gj.uniform2f(uI.c,hoverCx,hoverCy);
+  gj.uniform2f(uI.center,0,0); gj.uniform1f(uI.span,3.0);
+  gj.uniform1i(uI.maxIter,260); gj.uniform1f(uI.escape,ESCAPE);
+  gj.uniform1f(uI.density,density); gj.uniform1f(uI.colorOffset,colorOffset);
+  gj.uniform1i(uI.palette,paletteIdx);
+  gj.drawArrays(gj.TRIANGLES,0,3);
+  el('inset-c').textContent = hoverCx.toFixed(3)+(hoverCy>=0?'+':'')+hoverCy.toFixed(3)+'i';
+}
+
+function computeAutoIter(vw,base,cap){
+  const zoom=base/vw; const it=Math.round(256+130*Math.max(0,Math.log2(zoom)));
+  return Math.max(64,Math.min(cap,it));
 }
 
 // ---------- UI ----------
-const el = id => document.getElementById(id);
-function setStatus(busy){
-  const s = el('status');
-  s.textContent = busy ? 'rendering…' : 'ready';
-  s.className = busy ? 'busy' : 'idle';
-}
+const el=id=>document.getElementById(id);
+function setStatus(b){ const s=el('status'); s.textContent=b?'rendering…':'ready'; s.className=b?'busy':'idle'; }
 function updateUI(){
-  const zoom = INIT_VIEW_W / viewWidth;
-  el('i-zoom').textContent = zoom < 1e4 ? zoom.toFixed(1)+'×'
-    : zoom.toExponential(2).replace('e+', '×10^');
-  el('i-iter').textContent = maxIter;
-  el('i-prec').textContent = storedP + ' bit';
-  const digits = Math.min(120, Math.max(4, Math.ceil(-Math.log10(viewWidth)) + 4));
-  el('i-re').textContent = fixToString(cxFix, storedP, digits);
-  el('i-im').textContent = fixToString(cyFix, storedP, digits);
-  const sl = el('iterSlider');
-  if (+sl.value !== maxIter && maxIter <= +sl.max) sl.value = maxIter;
+  if(mode==='mandelbrot'){
+    const zoom=INIT_VIEW_W/viewWidth;
+    el('i-zoom').textContent = zoom<1e4 ? zoom.toFixed(1)+'×' : zoom.toExponential(2).replace('e+','×10^');
+    el('i-iter').textContent=maxIter; el('i-prec').textContent=storedP+' bit';
+    const digits=Math.min(120,Math.max(4,Math.ceil(-Math.log10(viewWidth))+4));
+    el('i-re').textContent=fixToString(cxFix,storedP,digits);
+    el('i-im').textContent=fixToString(cyFix,storedP,digits);
+    syncSlider(maxIter);
+  } else {
+    const zoom=3.5/jViewWidth;
+    el('i-zoom').textContent = zoom<1e4 ? zoom.toFixed(1)+'×' : zoom.toExponential(2).replace('e+','×10^');
+    el('i-iter').textContent=jMaxIter;
+    el('i-c').textContent=jcx.toFixed(6)+(jcy>=0?' + ':' − ')+Math.abs(jcy).toFixed(6)+'i';
+    syncSlider(jMaxIter);
+  }
 }
+function syncSlider(v){ const s=el('iterSlider'); if(+s.value!==v && v<=+s.max) s.value=v; }
 
-function zoomAt(cssX, cssY, factor){
-  const px = (cssX * dpr - deviceW * 0.5);
-  const py = (deviceH * 0.5 - cssY * dpr);   // y up
-  const oldStep = viewWidth / deviceW;
-  viewWidth *= factor;
-  const newStep = viewWidth / deviceW;
-  offsetCenter(px * (oldStep - newStep), py * (oldStep - newStep));
+function setMode(m){
+  mode=m;
+  el('title').textContent = m==='mandelbrot' ? '● MANDELBROT' : '● JULIA';
+  document.querySelectorAll('#seg button').forEach(b=>b.classList.toggle('active', b.dataset.mode===m));
+  el('info-mandel').style.display = m==='mandelbrot'?'block':'none';
+  el('info-julia').style.display  = m==='julia'?'block':'none';
+  el('row-prec').style.display    = m==='mandelbrot'?'flex':'none';
+  el('inset').style.display       = (m==='mandelbrot'&&showInset)?'block':'none';
+  el('btnAuto').classList.toggle('on', m==='mandelbrot'?autoIter:jAuto);
+  el('i-iterauto').textContent = (m==='mandelbrot'?autoIter:jAuto)?'(auto)':'(manual)';
+  buildPresets();
   scheduleRender();
 }
 
-canvas.addEventListener('wheel', e => {
-  e.preventDefault();
-  zoomAt(e.clientX, e.clientY, Math.pow(1.0016, e.deltaY));
-}, { passive: false });
-
-let dragging = false, lastX = 0, lastY = 0;
-canvas.addEventListener('pointerdown', e => {
-  dragging = true; lastX = e.clientX; lastY = e.clientY;
-  canvas.classList.add('dragging'); canvas.setPointerCapture(e.pointerId);
-});
-canvas.addEventListener('pointermove', e => {
-  if (!dragging) return;
-  const step = viewWidth / deviceW;
-  offsetCenter(-(e.clientX - lastX) * dpr * step, (e.clientY - lastY) * dpr * step);
-  lastX = e.clientX; lastY = e.clientY;
+// ---------- presets ----------
+const MANDEL_PRESETS=[
+  {n:'— Mandelbrot home —', re:-0.5, im:0, w:3.5},
+  {n:'Seahorse Valley', re:-0.743643887, im:0.131825904, w:3e-3},
+  {n:'Elephant Valley', re:0.2752, im:0.00673, w:0.012},
+  {n:'Triple Spiral', re:-0.088, im:0.654, w:0.012},
+  {n:'Scepter Valley', re:-1.25275, im:0.343, w:0.01},
+  {n:'Mini Mandelbrot', re:-1.7497591, im:0.0000000, w:5e-4},
+  {n:'Starfish', re:-0.7269, im:0.1889, w:4e-3},
+];
+const JULIA_PRESETS=[
+  {n:'Dendrite', re:0, im:1},
+  {n:'Douady Rabbit', re:-0.123, im:0.745},
+  {n:'San Marco', re:-0.75, im:0},
+  {n:'Siegel Disk', re:-0.391, im:-0.587},
+  {n:'Spiral', re:0.285, im:0.01},
+  {n:'Galaxy', re:-0.8, im:0.156},
+  {n:'Lightning', re:-0.7269, im:0.1889},
+];
+function buildPresets(){
+  const sel=el('presets'); sel.innerHTML='';
+  const list = mode==='mandelbrot'?MANDEL_PRESETS:JULIA_PRESETS;
+  list.forEach((p,i)=>{ const o=document.createElement('option'); o.value=i;
+    o.textContent = mode==='julia' ? `c = ${p.n}` : p.n; sel.appendChild(o); });
+  sel.selectedIndex=0;
+}
+el('presets').addEventListener('change', e=>{
+  const i=+e.target.value;
+  if(mode==='mandelbrot'){
+    const p=MANDEL_PRESETS[i]; viewWidth=p.w; storedP=precisionForView();
+    cxFix=doubleToFix(p.re,storedP); cyFix=doubleToFix(p.im,storedP); autoIter=true;
+    el('btnAuto').classList.add('on'); el('i-iterauto').textContent='(auto)';
+  } else {
+    const p=JULIA_PRESETS[i]; jcx=p.re; jcy=p.im; jCenterX=0; jCenterY=0; jViewWidth=3.5; jAuto=true;
+    el('btnAuto').classList.add('on'); el('i-iterauto').textContent='(auto)';
+  }
   scheduleRender();
 });
-function endDrag(){ dragging = false; canvas.classList.remove('dragging'); }
+
+// ---------- pan / zoom (both modes) ----------
+function zoomAt(cssX,cssY,factor){
+  const px=(cssX*dpr-deviceW*0.5), py=(deviceH*0.5-cssY*dpr);
+  if(mode==='mandelbrot'){
+    const oldStep=viewWidth/deviceW; viewWidth*=factor; const newStep=viewWidth/deviceW;
+    offsetCenter(px*(oldStep-newStep), py*(oldStep-newStep));
+    scheduleRender(true);
+  } else {
+    const oldStep=jViewWidth/deviceW; jViewWidth*=factor; const newStep=jViewWidth/deviceW;
+    jCenterX+=px*(oldStep-newStep); jCenterY+=py*(oldStep-newStep);
+    scheduleRender(false);
+  }
+}
+canvas.addEventListener('wheel', e=>{ e.preventDefault();
+  zoomAt(e.clientX,e.clientY,Math.pow(1.0016,e.deltaY));
+  updateHover(e.clientX,e.clientY);
+},{passive:false});
+
+let dragging=false,lastX=0,lastY=0,moved=false;
+canvas.addEventListener('pointerdown', e=>{ dragging=true; moved=false; lastX=e.clientX; lastY=e.clientY;
+  canvas.classList.add('dragging'); canvas.setPointerCapture(e.pointerId); });
+canvas.addEventListener('pointermove', e=>{
+  if(dragging){
+    moved=true;
+    const dx=(e.clientX-lastX)*dpr, dy=(e.clientY-lastY)*dpr;
+    if(mode==='mandelbrot'){ const step=viewWidth/deviceW; offsetCenter(-dx*step, dy*step); scheduleRender(true); }
+    else { const step=jViewWidth/deviceW; jCenterX-=dx*step; jCenterY+=dy*step; scheduleRender(false); }
+    lastX=e.clientX; lastY=e.clientY;
+  } else {
+    updateHover(e.clientX,e.clientY);
+  }
+});
+function endDrag(){ dragging=false; canvas.classList.remove('dragging'); }
 canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);
-canvas.addEventListener('dblclick', e => {
-  e.preventDefault();
-  zoomAt(e.clientX, e.clientY, e.shiftKey ? 2.5 : 0.4);
+canvas.addEventListener('dblclick', e=>{ e.preventDefault(); zoomAt(e.clientX,e.clientY,e.shiftKey?2.5:0.4); });
+
+// live Julia preview follows the cursor over the Mandelbrot
+let insetPending=false;
+function updateHover(cssX,cssY){
+  lastCssX=cssX; lastCssY=cssY;
+  if(mode!=='mandelbrot'||!showInset) return;
+  const step=viewWidth/deviceW;
+  hoverCx=fixToDouble(cxFix,storedP)+(cssX*dpr-deviceW*0.5)*step;
+  hoverCy=fixToDouble(cyFix,storedP)+(deviceH*0.5-cssY*dpr)*step;
+  hovering=true;
+  if(!insetPending){ insetPending=true; requestAnimationFrame(()=>{ insetPending=false; if(showInset&&mode==='mandelbrot') renderInset(); }); }
+}
+
+// open the previewed Julia set full-screen
+el('inset').addEventListener('click', ()=>{
+  jcx=hoverCx; jcy=hoverCy; jCenterX=0; jCenterY=0; jViewWidth=3.5; jAuto=true;
+  setMode('julia');
 });
 
-let pinch = null;
-canvas.addEventListener('touchstart', e => {
-  if (e.touches.length === 2){
-    const [a,b] = e.touches;
-    pinch = { d: Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY),
-              x:(a.clientX+b.clientX)/2, y:(a.clientY+b.clientY)/2 };
+// pinch
+let pinch=null;
+canvas.addEventListener('touchstart', e=>{ if(e.touches.length===2){ const[a,b]=e.touches;
+  pinch={d:Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY),x:(a.clientX+b.clientX)/2,y:(a.clientY+b.clientY)/2}; } },{passive:false});
+canvas.addEventListener('touchmove', e=>{ if(e.touches.length===2&&pinch){ e.preventDefault();
+  const[a,b]=e.touches; const d=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
+  zoomAt(pinch.x,pinch.y,pinch.d/d); pinch.d=d; } },{passive:false});
+canvas.addEventListener('touchend', ()=>{ pinch=null; });
+
+// ---------- controls ----------
+document.querySelectorAll('#seg button').forEach(b=>b.addEventListener('click',()=>{
+  if(b.dataset.mode==='julia' && mode==='mandelbrot'){ jcx=hoverCx; jcy=hoverCy; jCenterX=0; jCenterY=0; jViewWidth=3.5; }
+  setMode(b.dataset.mode);
+}));
+el('iterSlider').addEventListener('input', e=>{
+  const v=parseInt(e.target.value);
+  if(mode==='mandelbrot'){ autoIter=false; maxIter=v; } else { jAuto=false; jMaxIter=v; }
+  el('btnAuto').classList.remove('on'); el('i-iterauto').textContent='(manual)';
+  scheduleRender(true);
+});
+el('colorSlider').addEventListener('input', e=>{ colorOffset=e.target.value/100; scheduleRender(false); });
+el('densitySlider').addEventListener('input', e=>{ density=parseInt(e.target.value); scheduleRender(false); });
+el('paletteSlider').addEventListener('input', e=>{ paletteIdx=parseInt(e.target.value); scheduleRender(false); });
+
+el('btnReset').addEventListener('click', ()=>{
+  if(mode==='mandelbrot'){ viewWidth=INIT_VIEW_W; storedP=precisionForView();
+    cxFix=doubleToFix(INIT_RE,storedP); cyFix=doubleToFix(INIT_IM,storedP); autoIter=true; }
+  else { jCenterX=0; jCenterY=0; jViewWidth=3.5; jAuto=true; }
+  el('btnAuto').classList.add('on'); el('i-iterauto').textContent='(auto)';
+  scheduleRender(true);
+});
+el('btnAuto').addEventListener('click', ()=>{
+  if(mode==='mandelbrot') autoIter=!autoIter; else jAuto=!jAuto;
+  const on = mode==='mandelbrot'?autoIter:jAuto;
+  el('btnAuto').classList.toggle('on',on); el('i-iterauto').textContent=on?'(auto)':'(manual)';
+  scheduleRender(true);
+});
+el('btnAnim').addEventListener('click', ()=>{
+  animating=!animating; el('btnAnim').classList.toggle('on',animating);
+  if(animating) requestAnimationFrame(animLoop);
+});
+function animLoop(){ if(!animating) return;
+  colorOffset=(colorOffset+0.004)%1; el('colorSlider').value=Math.round(colorOffset*100);
+  quickRender(); requestAnimationFrame(animLoop);
+}
+el('btnInset').addEventListener('click', ()=>{
+  showInset=!showInset; el('btnInset').classList.toggle('on',showInset);
+  el('inset').style.display=(showInset&&mode==='mandelbrot')?'block':'none';
+  if(showInset&&mode==='mandelbrot') renderInset();
+});
+el('btnFull').addEventListener('click', ()=>{
+  if(!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+  else document.exitFullscreen?.();
+});
+el('btnSave').addEventListener('click', ()=>{
+  scheduleRender(false);
+  requestAnimationFrame(()=>{ const a=document.createElement('a');
+    a.download=(mode==='mandelbrot'?'mandelbrot_':'julia_')+Date.now()+'.png';
+    a.href=canvas.toDataURL('image/png'); a.click(); });
+});
+el('btnHide').addEventListener('click', ()=>{ el('panel').style.display='none'; el('btnShow').style.display='block'; });
+el('btnShow').addEventListener('click', ()=>{ el('panel').style.display='block'; el('btnShow').style.display='none'; });
+
+window.addEventListener('keydown', e=>{
+  if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT') return;
+  const k=e.key;
+  if(k==='+'||k==='=') zoomAt(innerWidth/2,innerHeight/2,0.6);
+  else if(k==='-'||k==='_') zoomAt(innerWidth/2,innerHeight/2,1/0.6);
+  else if(k==='j'||k==='J') setMode(mode==='mandelbrot'?'julia':'mandelbrot');
+  else if(k==='c'||k==='C') el('btnAnim').click();
+  else if(k==='f'||k==='F') el('btnFull').click();
+  else if(k==='r'||k==='R') el('btnReset').click();
+  else {
+    const s=(mode==='mandelbrot'?viewWidth:jViewWidth)/deviceW, d=80*dpr;
+    if(k==='ArrowLeft'){ pan(-d*s,0); } else if(k==='ArrowRight'){ pan(d*s,0); }
+    else if(k==='ArrowUp'){ pan(0,d*s); } else if(k==='ArrowDown'){ pan(0,-d*s); }
   }
-}, { passive:false });
-canvas.addEventListener('touchmove', e => {
-  if (e.touches.length === 2 && pinch){
-    e.preventDefault();
-    const [a,b] = e.touches;
-    const d = Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY);
-    zoomAt(pinch.x, pinch.y, pinch.d / d); pinch.d = d;
-  }
-}, { passive:false });
-canvas.addEventListener('touchend', () => { pinch = null; });
-
-el('iterSlider').addEventListener('input', e => {
-  autoIter = false; el('btnAuto').textContent = '⚙ Auto iter: off';
-  el('i-iterauto').textContent = '(manual)';
-  maxIter = parseInt(e.target.value); scheduleRender();
 });
-el('colorSlider').addEventListener('input', e => { colorOffset = e.target.value/100; scheduleRender(); });
-el('densitySlider').addEventListener('input', e => { density = parseInt(e.target.value); scheduleRender(); });
-el('paletteSlider').addEventListener('input', e => { paletteIdx = parseInt(e.target.value); scheduleRender(); });
-
-el('btnReset').addEventListener('click', () => {
-  viewWidth = INIT_VIEW_W; storedP = precisionForView();
-  cxFix = doubleToFix(INIT_RE, storedP); cyFix = doubleToFix(INIT_IM, storedP);
-  autoIter = true; el('btnAuto').textContent = '⚙ Auto iter: on';
-  el('i-iterauto').textContent = '(auto)';
-  scheduleRender();
-});
-el('btnAuto').addEventListener('click', () => {
-  autoIter = !autoIter;
-  el('btnAuto').textContent = '⚙ Auto iter: ' + (autoIter ? 'on' : 'off');
-  el('i-iterauto').textContent = autoIter ? '(auto)' : '(manual)';
-  scheduleRender();
-});
-el('btnSave').addEventListener('click', () => {
-  scheduleRender();
-  requestAnimationFrame(() => {
-    const a = document.createElement('a');
-    a.download = 'mandelbrot_' + Date.now() + '.png';
-    a.href = canvas.toDataURL('image/png'); a.click();
-  });
-});
-el('btnHide').addEventListener('click', () => {
-  el('panel').style.display = 'none'; el('btnShow').style.display = 'block';
-});
-el('btnShow').addEventListener('click', () => {
-  el('panel').style.display = 'block'; el('btnShow').style.display = 'none';
-});
-window.addEventListener('keydown', e => {
-  const stepPx = 80, step = viewWidth / deviceW;
-  if (e.key === '+' || e.key === '=') zoomAt(innerWidth/2, innerHeight/2, 0.6);
-  else if (e.key === '-' || e.key === '_') zoomAt(innerWidth/2, innerHeight/2, 1/0.6);
-  else if (e.key === 'ArrowLeft'){ offsetCenter(-stepPx*dpr*step, 0); scheduleRender(); }
-  else if (e.key === 'ArrowRight'){ offsetCenter(stepPx*dpr*step, 0); scheduleRender(); }
-  else if (e.key === 'ArrowUp'){ offsetCenter(0, stepPx*dpr*step); scheduleRender(); }
-  else if (e.key === 'ArrowDown'){ offsetCenter(0, -stepPx*dpr*step); scheduleRender(); }
-  else if (e.key === 'r' || e.key === 'R') el('btnReset').click();
-});
+function pan(odx,ody){
+  if(mode==='mandelbrot'){ offsetCenter(odx,ody); scheduleRender(true); }
+  else { jCenterX+=odx; jCenterY+=ody; scheduleRender(false); }
+}
 
 function resize(){
-  dpr = Math.min(window.devicePixelRatio || 1, 2);
-  deviceW = Math.max(1, Math.floor(window.innerWidth * dpr));
-  deviceH = Math.max(1, Math.floor(window.innerHeight * dpr));
-  canvas.width = deviceW; canvas.height = deviceH;
-  gl.viewport(0, 0, deviceW, deviceH);
-  scheduleRender();
+  dpr=Math.min(window.devicePixelRatio||1,2);
+  deviceW=Math.max(1,Math.floor(window.innerWidth*dpr));
+  deviceH=Math.max(1,Math.floor(window.innerHeight*dpr));
+  canvas.width=deviceW; canvas.height=deviceH;
+  scheduleRender(true);
 }
 window.addEventListener('resize', resize);
 
 // init
-storedP = precisionForView();
-cxFix = doubleToFix(INIT_RE, storedP);
-cyFix = doubleToFix(INIT_IM, storedP);
+storedP=precisionForView();
+cxFix=doubleToFix(INIT_RE,storedP); cyFix=doubleToFix(INIT_IM,storedP);
+buildPresets();
 resize();
+renderInset();
 </script>
 </body>
 </html>
